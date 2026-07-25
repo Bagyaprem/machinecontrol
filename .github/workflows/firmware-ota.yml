@@ -1,0 +1,75 @@
+name: Build and publish OTA firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'platformio.ini'
+      - 'partitions_ota.csv'
+      - 'sdkconfig.defaults'
+      - 'sdkconfig.esp32doit-devkit-v1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      # Repo requires six secrets under Settings > Secrets and variables >
+      # Actions: WIFI_SSID, WIFI_PASS, MQTT_HOST, MQTT_PORT, MQTT_USERNAME,
+      # MQTT_PASSWORD - see src/secrets.h.example for what each one is.
+      - name: Write secrets.h
+        run: |
+          cat > src/secrets.h <<EOF
+          #pragma once
+          #define WIFI_SSID "${{ secrets.WIFI_SSID }}"
+          #define WIFI_PASS "${{ secrets.WIFI_PASS }}"
+          #define MQTT_HOST "${{ secrets.MQTT_HOST }}"
+          #define MQTT_PORT ${{ secrets.MQTT_PORT }}
+          #define MQTT_USERNAME "${{ secrets.MQTT_USERNAME }}"
+          #define MQTT_PASSWORD "${{ secrets.MQTT_PASSWORD }}"
+          EOF
+
+      - name: Build firmware (USB env, upload disabled in CI)
+        run: pio run -e esp32doit-devkit-v1
+
+      - name: Read FIRMWARE_VERSION
+        id: ver
+        run: |
+          VERSION=$(grep -oP '(?<=#define FIRMWARE_VERSION ")[^"]+' src/config.h)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble OTA payload
+        run: |
+          mkdir -p ota
+          cp .pio/build/esp32doit-devkit-v1/firmware.bin ota/firmware.bin
+          cat > ota/manifest.json <<EOF
+          {"version": "${{ steps.ver.outputs.version }}", "url": "https://raw.githubusercontent.com/${{ github.repository }}/main/ota/firmware.bin"}
+          EOF
+
+      # Only ota/** changes here, and the trigger above doesn't watch ota/**,
+      # so this push doesn't re-trigger the workflow - "[skip ci]" is just a
+      # second layer of protection, not load-bearing on its own.
+      - name: Commit and push OTA payload
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ota/manifest.json ota/firmware.bin
+          if git diff --cached --quiet; then
+            echo "No OTA changes to commit"
+            exit 0
+          fi
+          git commit -m "ota: publish firmware ${{ steps.ver.outputs.version }} [skip ci]"
+          git push

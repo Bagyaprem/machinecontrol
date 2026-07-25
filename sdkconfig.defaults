@@ -1,0 +1,27 @@
+# The Arduino-as-ESP-IDF-component wrapper (used here for the hybrid
+# `framework = arduino, espidf` build - see platformio.ini) requires a 1000Hz
+# FreeRTOS tick rate; ESP-IDF's own default is 100Hz. Without this, `pio run`
+# fails immediately with:
+#   "esp32-arduino requires CONFIG_FREERTOS_HZ=1000 (currently 100)"
+CONFIG_FREERTOS_HZ=1000
+
+# Without this, the Arduino-as-ESP-IDF-component wrapper never provides an
+# app_main() - the actual ESP-IDF entry point that calls initArduino() then
+# bridges to this project's setup()/loop() - and the link fails with
+# "undefined reference to `app_main'".
+CONFIG_AUTOSTART_ARDUINO=y
+
+# Confirmed via `esptool.py flash_id` on the real board: genuine 4MB flash.
+# Without this, the build defaults to assuming 2MB (mismatched against the
+# esp32doit-devkit-v1 board manifest's declared 4MB) and warns accordingly -
+# pinning it explicitly avoids the bootloader ever using the wrong flash-size
+# map, which matters now that partitions_ota.csv uses flash space up near
+# the 2MB mark.
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# GitHub-pull OTA (src/ota_update.cpp) fetches over HTTPS from
+# raw.githubusercontent.com, a public CA-signed host, not our own pinned
+# broker cert - esp_crt_bundle_attach() (Mozilla's trusted-CA bundle) is
+# how it verifies that without us hand-embedding GitHub's own certificate
+# (which rotates independently of anything we control).
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y

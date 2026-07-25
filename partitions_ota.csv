@@ -1,0 +1,19 @@
+# OTA-capable partition table for the 4MB DOIT ESP32 DEVKIT V1.
+#
+# The board previously used the platform's default single "factory" app
+# partition (1MB, no ota_0/ota_1/otadata) - that layout has no room for
+# esp_https_ota() to write a new image while the current one is still
+# running, so GitHub-based OTA needs this table instead.
+#
+# Two 1.5MB app slots (current firmware is ~950KB, so this leaves real
+# headroom for OTA library overhead + future growth) plus otadata (which
+# slot esp_ota_ops should boot next) and the same nvs/phy_init the old
+# table had. Total used: ~3.09MB of the 4MB flash - no spiffs/storage
+# partition is defined since this firmware doesn't use one.
+#
+# Name,     Type, SubType,  Offset,   Size,      Flags
+nvs,        data, nvs,      0x9000,   0x4000,
+otadata,    data, ota,      0xd000,   0x2000,
+phy_init,   data, phy,      0xf000,   0x1000,
+ota_0,      app,  ota_0,    0x10000,  0x180000,
+ota_1,      app,  ota_1,    0x190000, 0x180000,
