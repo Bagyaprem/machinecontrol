@@ -51,6 +51,47 @@ static void dispatchCommand(const Command &cmd) {
   }
 }
 
+// Boot restore gate: hardware_io_init() already forces every relay/motor
+// pin OFF as the very first thing that runs, but on a bigger firmware image
+// the bootloader's own flash-load time (before setup() even starts) can
+// stretch long enough for a floating GPIO to actually trip a relay coil
+// before that safe-off write ever happens - see the hardware pull-up
+// recommendation for that specific gap, which no firmware change can close
+// since it's before any of this code runs.
+//
+// What THIS gate controls is different: it holds off re-applying whatever
+// was PERSISTED from before a power cut (a relay that was left ON, the
+// motor's last speed) until WiFi is confirmed up AND an extra 1s has
+// passed - rather than restoring it within the first few milliseconds of
+// boot like before. Per explicit user request: gives a longer, predictable
+// "everything OFF" window right after power-on instead of the persisted
+// state snapping back on almost immediately.
+//
+// The valve/solenoid is deliberately EXCLUDED from this restore entirely
+// (not just delayed) - see device_solenoid.cpp's safety comment. Water
+// flow resuming unattended after a power cut is the one case where "come
+// back to how it was" is actively unsafe, so it always comes back off and
+// needs a fresh manual command regardless of what it was doing before.
+static bool s_bootRestoreDone = false;
+static unsigned long s_wifiConnectedAtMs = 0;
+
+static void bootRestoreGate(unsigned long now) {
+  if (s_bootRestoreDone) return;
+  if (!g_wifiConnected) {
+    s_wifiConnectedAtMs = 0;   // reset if WiFi drops before the 1s elapses
+    return;
+  }
+  if (s_wifiConnectedAtMs == 0) s_wifiConnectedAtMs = now;
+  if (now - s_wifiConnectedAtMs < 1000UL) return;
+
+  led_apply_restored_state();
+  pump_apply_restored_state();
+  // No solenoid_apply_restored_state() call - the valve deliberately never
+  // auto-restores hold-on after a reboot, see device_solenoid.cpp.
+  motor_apply_restored_state();
+  s_bootRestoreDone = true;
+}
+
 // Core 1: all five device state machines run here, independently. Each
 // update() call is a handful of millis() comparisons - none of them can
 // block or wait on any other, so no device's timing can delay another's,
@@ -71,6 +112,8 @@ static void deviceTask(void *pv) {
     while (xQueueReceive(cmdQueueHandle, &cmd, 0) == pdTRUE) {
       dispatchCommand(cmd);
     }
+
+    bootRestoreGate(millis());
 
     led_update();
     pump_update();

@@ -1,7 +1,6 @@
 #include "device_solenoid.h"
 #include "hardware_io.h"
 #include "state_bus.h"
-#include "persist.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
@@ -40,10 +39,14 @@ static void reportConflict(const char *reason) {
   xQueueSend(stateQueueHandle, &upd, 0);
 }
 
+// SAFETY DECISION (explicit user requirement 2026-07-29): unlike every
+// other device, the valve deliberately NEVER auto-restores hold-on after a
+// reboot/power cut - it always comes back OFF and needs a fresh manual
+// command, full stop. This is the one relay where "resume whatever it was
+// doing before" is actively dangerous (unattended water flow), so there is
+// no persisted-hold-restore path here at all, not even a delayed one.
 void solenoid_init() {
-  holdOn = persist_get_bool("sol_hold", false);   // power-cut restore: sustained hold only, never a pulse-in-flight
-  applyRelay(holdOn);
-  dirty = true;
+  dirty = true;   // holdOn/pulsing already false by their static initializers, matching hardware_io_init()'s OFF write
 }
 
 void solenoid_trigger_pulse() {
@@ -64,7 +67,8 @@ void solenoid_set_hold(bool on) {
   } else if (!pulsing) {
     applyRelay(false);
   }
-  persist_set_bool("sol_hold", holdOn);
+  // Deliberately not persisted - see the safety comment on solenoid_init()
+  // above. Hold state is live-only, never survives a reboot.
   dirty = true;
 }
 

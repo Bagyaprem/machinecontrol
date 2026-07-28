@@ -60,16 +60,25 @@ static float readMq135Ppm() {
   return 116.6020682f * powf(ratio, -2.769034857f);   // standard MQ135 CO2-equivalent curve fit
 }
 
+static int pendingSpeedRestore = 0;
+
 void motor_init() {
   hw_write_motor_pwm(0);
-  // Power-cut restore: only the last MANUAL speed. The trigger flags
-  // (mq135/external) are live inputs re-evaluated from scratch after boot.
-  // appliedSpeed stays -1 so the first motor_update() tick runs the full
-  // priority resolver against the restored manual speed.
+  // Motor stays at 0 (manualSpeed default) until motor_apply_restored_state()
+  // runs - see main.cpp's boot restore gate. The trigger flags (mq135/
+  // external) are live inputs re-evaluated from scratch after boot, so only
+  // the last MANUAL speed needs restoring, same as before.
   int saved = persist_get_int("motor_spd", 0);
-  if (saved == 0 || saved == 50 || saved == 75 || saved == 100) manualSpeed = saved;
+  if (saved == 0 || saved == 50 || saved == 75 || saved == 100) pendingSpeedRestore = saved;
+  // auto_enabled restored immediately - it doesn't energize anything by
+  // itself, it only permits a FUTURE mq135/PM trigger to raise the speed.
   autoEnabled = persist_get_bool("motor_auto", false);
   lastMq135PollAt = millis();
+}
+
+void motor_apply_restored_state() {
+  manualSpeed = pendingSpeedRestore;
+  dirty = true;
 }
 
 void motor_set_manual(int speed) {

@@ -293,6 +293,7 @@ static bool s_wifiWasConnected = false;
 static void wifiSupervisor(unsigned long now) {
   bool connected = (WiFi.status() == WL_CONNECTED);
   digitalWrite(PIN_WIFI_LED, connected ? HIGH : LOW);
+  g_wifiConnected = connected;
   if (connected) {
     if (!s_wifiWasConnected) s_wifiBackoffMs = BACKOFF_MIN_MS;
     s_wifiWasConnected = true;

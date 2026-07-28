@@ -7,8 +7,17 @@
 static bool ledOn = false;
 static bool dirty = true;   // forces one initial publish so a fresh dashboard load sees a value immediately
 
+static bool pendingRestore = false;
+
 void led_init() {
-  ledOn = persist_get_bool("led", false);   // power-cut restore: come back exactly as last commanded
+  // Relay stays OFF (already set by hardware_io_init()) until
+  // led_apply_restored_state() runs - see main.cpp's boot restore gate.
+  pendingRestore = persist_get_bool("led", false);
+  dirty = true;
+}
+
+void led_apply_restored_state() {
+  ledOn = pendingRestore;
   hw_write_led(ledOn);
   dirty = true;
 }

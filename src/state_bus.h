@@ -64,4 +64,9 @@ extern QueueHandle_t stateQueueHandle;
 // display/telemetry flag - Core 1 never blocks waiting on it.
 extern volatile bool g_mqttConnected;
 
+// Same pattern as g_mqttConnected, but tracks WiFi association specifically
+// (set in network_task.cpp's wifiSupervisor()) - used by main.cpp's boot
+// restore gate to know when it's safe to apply persisted relay/motor state.
+extern volatile bool g_wifiConnected;
+
 void state_bus_init();
