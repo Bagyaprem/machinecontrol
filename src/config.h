@@ -67,6 +67,16 @@
 // the rest. The board checks on boot, every OTA_CHECK_INTERVAL_MS, and
 // instantly if you publish to TOPIC_OTA_TRIGGER - no USB needed.
 #define FIRMWARE_VERSION "1.1.0"
+// Fully stripped out of the build (not just runtime-disabled) as of
+// 2026-07-29 - see ota_update.cpp. Cuts the HTTPS/TLS client code (esp_http_
+// client, esp_https_ota, the mbedTLS cert bundle) out of the linked image
+// entirely, shrinking flash usage and therefore the bootloader's flash-load
+// time - an attempt at shortening the pre-firmware GPIO-floating window
+// that's been causing the relay boot flicker, tried before resorting to
+// hardware pull-up resistors. Flip to 1 (and restore the real
+// implementation's #if guard below) once OTA is actually wired up and worth
+// paying this size cost for again.
+#define OTA_ENABLED 0
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/Bagyaprem/machinecontrol/main/ota/manifest.json"
 #define OTA_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)   // 6 hours
 
@@ -118,18 +128,24 @@
 #define PIN_RPWM        25   // motor driver forward PWM
 #define PIN_LPWM        26   // motor driver reverse PWM (unused - single direction only)
 #define PIN_MOTOR_EN    27   // motor driver enable
-#define PIN_RELAY_PUMP  32   // relay 3 - air pump
-#define PIN_RELAY_VALVE 33   // relay 4 - solenoid / drain valve
-#define PIN_RELAY_LED   14   // relay 1 - LED strip (moved from GPIO18 to left row, away from TFT pins)
-#define PIN_RELAY_MIST  13   // relay 2 - mist diffuser (moved from GPIO19 to left row, away from TFT pins)
+// All 4 relays now on one contiguous GPIO16-19 block (2026-07-29): none of
+// these are strapping pins, the 32kHz crystal pins (GPIO32/33 - confirmed
+// on hardware to float less predictably at boot, causing a relay click
+// before firmware takes over), or input-only pins. TFT_DC/TFT_SCK moved to
+// GPIO13/14 (former relay pins) to make room - equally safe for the TFT,
+// software SPI doesn't care which ordinary GPIOs it uses.
+#define PIN_RELAY_LED   16   // relay 1 - LED strip (silkscreen: RX2)
+#define PIN_RELAY_MIST  17   // relay 2 - mist diffuser (silkscreen: TX2)
+#define PIN_RELAY_PUMP  18   // relay 3 - air pump (silkscreen: D18)
+#define PIN_RELAY_VALVE 19   // relay 4 - solenoid / drain valve (silkscreen: D19)
 #define PIN_WIFI_LED     2   // onboard LED - WiFi/MQTT status
 #define PIN_MQ135       34   // MQ135 AO through an external 15k+15k divider (input-only ADC1 pin) - see device_motor.cpp's readMq135Ppm() ×2 compensation
 
 #define TFT_CS   5
 #define TFT_RST  4
-#define TFT_DC   16
+#define TFT_DC   13   // moved from GPIO16 to make room for PIN_RELAY_LED above (silkscreen: D13, left row)
 #define TFT_MOSI 23
-#define TFT_SCK  17
+#define TFT_SCK  14   // moved from GPIO17 to make room for PIN_RELAY_MIST above (silkscreen: D14, left row)
 #define TFT_LED  21   // backlight
 
 // Per-relay polarity (modules are mixed): false = active-HIGH, true =

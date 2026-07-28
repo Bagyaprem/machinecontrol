@@ -1,5 +1,8 @@
 #include "ota_update.h"
 #include "config.h"
+
+#if OTA_ENABLED
+
 #include "network_task.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -136,3 +139,17 @@ void ota_poll(unsigned long now, bool mqttConnected) {
   Serial.printf("[ota] new version available: %s (current %s)\n", version, FIRMWARE_VERSION);
   performUpdate(url);
 }
+
+#else  // !OTA_ENABLED
+
+// Stub build: no esp_http_client/esp_https_ota/mbedTLS cert bundle linked
+// in at all - see config.h's OTA_ENABLED comment for why. network_task.cpp
+// calls these unconditionally, so the signatures have to stay, they just do
+// nothing now.
+#include <Arduino.h>
+
+void ota_request_check() {}
+void ota_init() { Serial.println("[ota] disabled (stripped from this build)"); }
+void ota_poll(unsigned long now, bool mqttConnected) { (void)now; (void)mqttConnected; }
+
+#endif  // OTA_ENABLED
