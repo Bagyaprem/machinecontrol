@@ -124,8 +124,12 @@ static void handleIncomingCommand(const char *topic, const char *payload, int le
     } else if (doc["hold"].is<bool>()) {
       cmd.type = CMD_SOLENOID_HOLD_SET; cmd.boolValue = doc["hold"]; have = true;
     }
-  } else if (strcmp(topic, TOPIC_MOTOR_SET) == 0 && doc["speed"].is<int>()) {
-    cmd.type = CMD_MOTOR_SET; cmd.intValue = doc["speed"]; have = true;
+  } else if (strcmp(topic, TOPIC_MOTOR_SET) == 0) {
+    if (doc["speed"].is<int>()) {
+      cmd.type = CMD_MOTOR_SET; cmd.intValue = doc["speed"]; have = true;
+    } else if (doc["auto"].is<bool>()) {
+      cmd.type = CMD_MOTOR_AUTO_SET; cmd.boolValue = doc["auto"]; have = true;
+    }
   } else if (strcmp(topic, TOPIC_MOTOR_EXTERNAL_TRIGGER) == 0 && doc["request"].is<bool>()) {
     cmd.type = CMD_EXTERNAL_TRIGGER_SET; cmd.boolValue = doc["request"]; have = true;
   } else if (strcmp(topic, TOPIC_EXTERNAL_PM_READING) == 0 && doc["pm25"].is<float>()) {

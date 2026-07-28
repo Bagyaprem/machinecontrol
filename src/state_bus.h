@@ -21,6 +21,7 @@ enum CommandType {
   CMD_SOLENOID_PULSE,    // no payload
   CMD_SOLENOID_HOLD_SET, // boolValue = hold on/off
   CMD_MOTOR_SET,             // intValue = 0/50/75/100
+  CMD_MOTOR_AUTO_SET,        // boolValue = enable/disable the mq135/external-PM auto-trigger switch
   CMD_EXTERNAL_TRIGGER_SET,  // boolValue = backend-resolved external-PM request (hysteresis already applied by the backend)
   CMD_EXTERNAL_READING_SET,  // floatValue = raw pm25 for TFT display only, never a control input
   CMD_SCHEDULE_SET,          // schedule = {enabled, onH, onM, offH, offM}

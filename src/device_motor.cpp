@@ -7,20 +7,22 @@
 #include <ArduinoJson.h>
 #include <math.h>
 
-// Priority resolver (updated 2026-07-29 per explicit user request): the
-// MQ135/external-PM auto-triggers only ever get to raise the speed - they
-// can never turn the motor on by themselves. If the user has it manually
-// OFF (manualSpeed == 0), it stays off regardless of ppm/pm2.5, full stop.
-// Only once the user has manually turned it on to some speed do the
-// triggers get to bump that speed up further (mq135 to at least 100,
-// external PM to at least 50).
+// Priority resolver (updated again 2026-07-29 per explicit user request):
+// a separate master "auto" switch now gates whether the MQ135/external-PM
+// triggers get to influence the speed at all - mirrors the mist module's
+// own auto_enabled toggle. manual_speed is ALWAYS applied regardless of
+// this switch ("manual check" - lets you directly verify/drive the motor
+// at any time, auto on or off).
 //
-//   requested = manualSpeed == 0 ? 0 : MAX(manual_request, mq135_request, external_pm_request)
+//   requested = autoEnabled ? MAX(manual_speed, mq135_request?100:0, external_pm_request?50:0)
+//                           : manual_speed
 //
-// This replaces the previous design, where a trigger could autonomously
-// start the motor even from a manual OFF state (with an override_off escape
-// hatch to suppress that) - that whole override concept is gone now, since
-// there's nothing left for it to override.
+// With auto OFF (the default, and the previous behavior this replaces):
+// the motor is purely manual, full stop, regardless of ppm/pm2.5.
+// With auto ON: it follows CO2/PM2.5 automatically, boosting above
+// whatever manual_speed is currently set to - but manual_speed itself
+// still works normally the whole time, so you can always manually check/
+// drive it to a specific speed without having to first disable auto.
 
 #define MQ135_POLL_MS 3000UL
 
@@ -35,6 +37,7 @@
 #define MQ135_OFF_PPM     80.0f
 
 static int manualSpeed = 0;
+static bool autoEnabled = false;
 static bool mq135Request = false;
 static bool externalPmRequest = false;
 static int appliedSpeed = -1;   // -1 forces the very first apply/publish
@@ -65,6 +68,7 @@ void motor_init() {
   // priority resolver against the restored manual speed.
   int saved = persist_get_int("motor_spd", 0);
   if (saved == 0 || saved == 50 || saved == 75 || saved == 100) manualSpeed = saved;
+  autoEnabled = persist_get_bool("motor_auto", false);
   lastMq135PollAt = millis();
 }
 
@@ -72,6 +76,13 @@ void motor_set_manual(int speed) {
   if (speed != 0 && speed != 50 && speed != 75 && speed != 100) return;
   manualSpeed = speed;
   persist_set_int("motor_spd", manualSpeed);
+  dirty = true;
+}
+
+void motor_set_auto(bool enabled) {
+  if (enabled == autoEnabled) return;
+  autoEnabled = enabled;
+  persist_set_bool("motor_auto", autoEnabled);
   dirty = true;
 }
 
@@ -112,10 +123,11 @@ void motor_update() {
   unsigned long now = millis();
   pollMq135(now);
 
-  // Auto-triggers only ever raise the speed, and only once the motor is
-  // already manually on - see the priority-resolver comment above.
+  // manual_speed always applies ("manual check"); auto-triggers only raise
+  // it further, and only while the auto switch is on - see the
+  // priority-resolver comment above.
   int requested = manualSpeed;
-  if (manualSpeed != 0) {
+  if (autoEnabled) {
     if (mq135Request && requested < 100) requested = 100;
     if (externalPmRequest && requested < 50) requested = 50;
   }
@@ -133,6 +145,7 @@ void motor_update() {
   JsonDocument doc;
   doc["manual_speed"] = manualSpeed;
   doc["applied_speed"] = appliedSpeed;
+  doc["auto_enabled"] = autoEnabled;
   doc["mq135_request"] = mq135Request;
   doc["external_pm_request"] = externalPmRequest;
   serializeJson(doc, upd.json, sizeof(upd.json));

@@ -42,6 +42,7 @@ static void dispatchCommand(const Command &cmd) {
     case CMD_SOLENOID_PULSE:    solenoid_trigger_pulse(); break;
     case CMD_SOLENOID_HOLD_SET: solenoid_set_hold(cmd.boolValue); break;
     case CMD_MOTOR_SET:            motor_set_manual(cmd.intValue); break;
+    case CMD_MOTOR_AUTO_SET:       motor_set_auto(cmd.boolValue); break;
     case CMD_EXTERNAL_TRIGGER_SET: motor_set_external_trigger(cmd.boolValue); break;
     case CMD_EXTERNAL_READING_SET: external_reference_set(cmd.floatValue); break;
     case CMD_SCHEDULE_SET:
