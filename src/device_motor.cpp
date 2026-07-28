@@ -7,29 +7,20 @@
 #include <ArduinoJson.h>
 #include <math.h>
 
-// Priority resolver (spec):
-//   requested = MAX(mq135_request, external_pm_request, manual_request)
-//   if (user issued manual OFF while a trigger condition is active):
-//       override_off = true
-//   if (override_off AND both trigger sources have cleared below their OFF thresholds):
-//       override_off = false
-//   final_output = override_off ? 0 : requested
+// Priority resolver (updated 2026-07-29 per explicit user request): the
+// MQ135/external-PM auto-triggers only ever get to raise the speed - they
+// can never turn the motor on by themselves. If the user has it manually
+// OFF (manualSpeed == 0), it stays off regardless of ppm/pm2.5, full stop.
+// Only once the user has manually turned it on to some speed do the
+// triggers get to bump that speed up further (mq135 to at least 100,
+// external PM to at least 50).
 //
-// DESIGN DECISION (override reset behavior): override_off AUTO-CLEARS once
-// BOTH trigger sources have dropped back below their OFF thresholds - it
-// does NOT require a fresh explicit manual command to release. This matches
-// the spec's pseudocode verbatim (motor_update() below implements exactly
-// that line). The alternative - requiring an explicit manual re-enable -
-// would mean a single manual OFF permanently silences auto triggers until
-// the user acts again, which is arguably safer for some deployments, but is
-// not what this spec asked for.
+//   requested = manualSpeed == 0 ? 0 : MAX(manual_request, mq135_request, external_pm_request)
 //
-// A second, smaller decision made here: an explicit manual command to a
-// NON-ZERO speed always clears override_off too, even before both triggers
-// clear. Rationale: if the user is actively re-commanding the motor, that's
-// a more recent and more specific instruction than the stale override, and
-// there's no scenario where "motor stays force-off despite the operator
-// just asking for 50%" is the intended behavior.
+// This replaces the previous design, where a trigger could autonomously
+// start the motor even from a manual OFF state (with an override_off escape
+// hatch to suppress that) - that whole override concept is gone now, since
+// there's nothing left for it to override.
 
 #define MQ135_POLL_MS 3000UL
 
@@ -44,7 +35,6 @@
 #define MQ135_OFF_PPM     80.0f
 
 static int manualSpeed = 0;
-static bool overrideOff = false;
 static bool mq135Request = false;
 static bool externalPmRequest = false;
 static int appliedSpeed = -1;   // -1 forces the very first apply/publish
@@ -70,10 +60,9 @@ static float readMq135Ppm() {
 void motor_init() {
   hw_write_motor_pwm(0);
   // Power-cut restore: only the last MANUAL speed. The trigger flags
-  // (mq135/external) are live inputs re-evaluated from scratch after boot,
-  // and override_off is transient bookkeeping tied to those flags - neither
-  // makes sense to replay. appliedSpeed stays -1 so the first motor_update()
-  // tick runs the full priority resolver against the restored manual speed.
+  // (mq135/external) are live inputs re-evaluated from scratch after boot.
+  // appliedSpeed stays -1 so the first motor_update() tick runs the full
+  // priority resolver against the restored manual speed.
   int saved = persist_get_int("motor_spd", 0);
   if (saved == 0 || saved == 50 || saved == 75 || saved == 100) manualSpeed = saved;
   lastMq135PollAt = millis();
@@ -82,11 +71,6 @@ void motor_init() {
 void motor_set_manual(int speed) {
   if (speed != 0 && speed != 50 && speed != 75 && speed != 100) return;
   manualSpeed = speed;
-  if (speed == 0) {
-    if (mq135Request || externalPmRequest) overrideOff = true;
-  } else {
-    overrideOff = false;   // explicit non-zero manual command always clears a stale override - see comment above
-  }
   persist_set_int("motor_spd", manualSpeed);
   dirty = true;
 }
@@ -128,19 +112,16 @@ void motor_update() {
   unsigned long now = millis();
   pollMq135(now);
 
-  if (overrideOff && !mq135Request && !externalPmRequest) {
-    overrideOff = false;
-    dirty = true;
+  // Auto-triggers only ever raise the speed, and only once the motor is
+  // already manually on - see the priority-resolver comment above.
+  int requested = manualSpeed;
+  if (manualSpeed != 0) {
+    if (mq135Request && requested < 100) requested = 100;
+    if (externalPmRequest && requested < 50) requested = 50;
   }
 
-  int requested = manualSpeed;
-  if (mq135Request && requested < 100) requested = 100;
-  if (externalPmRequest && requested < 50) requested = 50;
-
-  int finalOutput = overrideOff ? 0 : requested;
-
-  if (finalOutput != appliedSpeed) {
-    appliedSpeed = finalOutput;
+  if (requested != appliedSpeed) {
+    appliedSpeed = requested;
     hw_write_motor_pwm(appliedSpeed);   // sole writer of the motor PWM pins - called only from here
     dirty = true;
   }
@@ -154,7 +135,6 @@ void motor_update() {
   doc["applied_speed"] = appliedSpeed;
   doc["mq135_request"] = mq135Request;
   doc["external_pm_request"] = externalPmRequest;
-  doc["override_off"] = overrideOff;
   serializeJson(doc, upd.json, sizeof(upd.json));
   xQueueSend(stateQueueHandle, &upd, 0);
 }
