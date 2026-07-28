@@ -33,6 +33,7 @@ static TopicCache s_pumpCache{false, ""};
 static TopicCache s_mistCache{false, ""};
 static TopicCache s_solenoidCache{false, ""};
 static TopicCache s_motorCache{false, ""};
+static TopicCache s_scheduleCache{false, ""};
 
 static const char *topicForState(StateTopicId id) {
   switch (id) {
@@ -43,6 +44,7 @@ static const char *topicForState(StateTopicId id) {
     case STATE_SOLENOID_ERROR: return TOPIC_SOLENOID_ERROR;
     case STATE_MOTOR:          return TOPIC_MOTOR_STATE;
     case STATE_MQ135_READING:  return TOPIC_MQ135_READING;
+    case STATE_SCHEDULE:       return TOPIC_SCHEDULE_STATE;
   }
   return nullptr;
 }
@@ -53,7 +55,7 @@ static const char *topicForState(StateTopicId id) {
 static bool isRetainedTopic(StateTopicId id) {
   switch (id) {
     case STATE_LED: case STATE_PUMP: case STATE_MIST:
-    case STATE_SOLENOID: case STATE_MOTOR:
+    case STATE_SOLENOID: case STATE_MOTOR: case STATE_SCHEDULE:
       return true;
     default:
       return false;
@@ -67,6 +69,7 @@ static TopicCache *cacheForState(StateTopicId id) {
     case STATE_MIST:     return &s_mistCache;
     case STATE_SOLENOID: return &s_solenoidCache;
     case STATE_MOTOR:    return &s_motorCache;
+    case STATE_SCHEDULE: return &s_scheduleCache;
     default: return nullptr;
   }
 }
@@ -89,6 +92,7 @@ static void resyncAllRetained() {
   if (s_mistCache.valid)     publishOne(STATE_MIST, s_mistCache.json);
   if (s_solenoidCache.valid) publishOne(STATE_SOLENOID, s_solenoidCache.json);
   if (s_motorCache.valid)    publishOne(STATE_MOTOR, s_motorCache.json);
+  if (s_scheduleCache.valid) publishOne(STATE_SCHEDULE, s_scheduleCache.json);
 }
 
 // Parses one incoming command message and forwards it to Core 1 as a
@@ -124,11 +128,23 @@ static void handleIncomingCommand(const char *topic, const char *payload, int le
     cmd.type = CMD_MOTOR_SET; cmd.intValue = doc["speed"]; have = true;
   } else if (strcmp(topic, TOPIC_MOTOR_EXTERNAL_TRIGGER) == 0 && doc["request"].is<bool>()) {
     cmd.type = CMD_EXTERNAL_TRIGGER_SET; cmd.boolValue = doc["request"]; have = true;
-  } else if (strcmp(topic, TOPIC_EXTERNAL_PM_READING) == 0 && doc["co2"].is<float>() && doc["pm25"].is<float>()) {
+  } else if (strcmp(topic, TOPIC_EXTERNAL_PM_READING) == 0 && doc["pm25"].is<float>()) {
     cmd.type = CMD_EXTERNAL_READING_SET;
-    cmd.externalReading.co2 = doc["co2"];
-    cmd.externalReading.pm25 = doc["pm25"];
+    cmd.floatValue = doc["pm25"];
     have = true;
+  } else if (strcmp(topic, TOPIC_SCHEDULE_SET) == 0 &&
+             doc["enabled"].is<bool>() && doc["on_time"].is<const char*>() && doc["off_time"].is<const char*>()) {
+    int onH, onM, offH, offM;
+    bool onOk  = sscanf(doc["on_time"].as<const char*>(),  "%d:%d", &onH, &onM)  == 2;
+    bool offOk = sscanf(doc["off_time"].as<const char*>(), "%d:%d", &offH, &offM) == 2;
+    if (onOk && offOk && onH >= 0 && onH < 24 && onM >= 0 && onM < 60 &&
+        offH >= 0 && offH < 24 && offM >= 0 && offM < 60) {
+      cmd.type = CMD_SCHEDULE_SET;
+      cmd.schedule.enabled = doc["enabled"];
+      cmd.schedule.onH = (uint8_t)onH;   cmd.schedule.onM = (uint8_t)onM;
+      cmd.schedule.offH = (uint8_t)offH; cmd.schedule.offM = (uint8_t)offM;
+      have = true;
+    }
   }
 
   if (have) xQueueSend(cmdQueueHandle, &cmd, 0);
@@ -157,6 +173,7 @@ static esp_err_t mqttEventHandler(esp_mqtt_event_handle_t event) {
       esp_mqtt_client_subscribe(s_client, TOPIC_MOTOR_SET, 1);
       esp_mqtt_client_subscribe(s_client, TOPIC_MOTOR_EXTERNAL_TRIGGER, 1);
       esp_mqtt_client_subscribe(s_client, TOPIC_EXTERNAL_PM_READING, 1);
+      esp_mqtt_client_subscribe(s_client, TOPIC_SCHEDULE_SET, 1);
       esp_mqtt_client_subscribe(s_client, TOPIC_OTA_TRIGGER, 1);
       esp_mqtt_client_publish(s_client, TOPIC_STATUS, "online", 0, 1, 1);
       resyncAllRetained();
@@ -326,6 +343,11 @@ void networkTaskFn(void *pv) {
   WiFi.setAutoReconnect(false);   // this task owns reconnect timing (exponential backoff) instead of WiFi's built-in immediate retry
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   ota_init();
+
+  // SNTP client for device_schedule.cpp's on/off timer - safe to start before
+  // WiFi actually has a route: the underlying SNTP client just keeps retrying
+  // on its own once a network path exists, same as WiFi.reconnect() above.
+  configTime(TZ_OFFSET_SEC, 0, NTP_SERVER);
 
   // mqttInit() is NOT called here - see mqttSupervisor()'s s_mqttInitAttempted
   // gate below, which defers it until WiFi actually has a connection.

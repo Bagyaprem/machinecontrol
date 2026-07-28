@@ -27,9 +27,20 @@ void ota_request_check() { s_checkRequested = true; }
 
 void ota_init() {
   Serial.printf("[ota] running firmware version %s\n", FIRMWARE_VERSION);
-  // First check waits a bit past boot so WiFi/MQTT have a real chance to be
-  // up already - ota_poll() itself re-gates on mqttConnected regardless.
-  s_nextCheckAt = millis() + 30000UL;
+  // Automatic checks disabled 2026-07-28: confirmed on hardware (twice,
+  // via serial monitor) that this boot-time check reliably kills the MQTT
+  // connection ~30s after boot - the blocking HTTPS/TLS request to GitHub
+  // collides with the MQTT client's own TLS session (esp_crt_bundle "PK
+  // verify failed", then MQTT gets "Connection reset by peer" and every
+  // reconnect after that fails DNS resolution permanently, until reboot).
+  // OTA isn't wired up end-to-end yet anyway (GitHub Actions secrets still
+  // not added - see esp32-mqtt-control's repo notes), so there's no
+  // upside to auto-checking right now, only a guaranteed outage every
+  // boot. Manual checks (publish anything to TOPIC_OTA_TRIGGER) still
+  // work below - only the automatic boot/interval trigger is disabled.
+  // Restore `millis() + 30000UL` here once the HTTPS/MQTT TLS collision
+  // is actually root-caused and fixed.
+  s_nextCheckAt = (unsigned long)-1;
 }
 
 static bool fetchManifest(char *outVersion, size_t verLen, char *outUrl, size_t urlLen) {
@@ -103,7 +114,9 @@ void ota_poll(unsigned long now, bool mqttConnected) {
   if (!due) return;
 
   s_checkRequested = false;
-  s_nextCheckAt = now + OTA_CHECK_INTERVAL_MS;
+  // Not rescheduled to now + OTA_CHECK_INTERVAL_MS - see ota_init()'s
+  // comment. A manual TOPIC_OTA_TRIGGER publish is the only thing that can
+  // make another check "due" while this stays disabled.
 
   network_publish_ota_status("checking");
   char version[32];

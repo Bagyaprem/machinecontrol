@@ -22,7 +22,8 @@ enum CommandType {
   CMD_SOLENOID_HOLD_SET, // boolValue = hold on/off
   CMD_MOTOR_SET,             // intValue = 0/50/75/100
   CMD_EXTERNAL_TRIGGER_SET,  // boolValue = backend-resolved external-PM request (hysteresis already applied by the backend)
-  CMD_EXTERNAL_READING_SET,  // externalReading = raw co2/pm25 for TFT display only, never a control input
+  CMD_EXTERNAL_READING_SET,  // floatValue = raw pm25 for TFT display only, never a control input
+  CMD_SCHEDULE_SET,          // schedule = {enabled, onH, onM, offH, offM}
 };
 
 struct Command {
@@ -31,7 +32,7 @@ struct Command {
     bool boolValue;
     int intValue;
     float floatValue;
-    struct { float co2; float pm25; } externalReading;
+    struct { bool enabled; uint8_t onH, onM, offH, offM; } schedule;
   };
 };
 
@@ -43,6 +44,7 @@ enum StateTopicId {
   STATE_SOLENOID_ERROR,   // one-shot conflict report, not retained
   STATE_MOTOR,
   STATE_MQ135_READING,    // one-shot sensor reading, not retained
+  STATE_SCHEDULE,
 };
 
 struct StateUpdate {

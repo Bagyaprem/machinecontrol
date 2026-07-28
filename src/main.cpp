@@ -27,6 +27,7 @@
 #include "device_mist.h"
 #include "device_solenoid.h"
 #include "device_motor.h"
+#include "device_schedule.h"
 #include "external_reference.h"
 #include "tft_display.h"
 #include "network_task.h"
@@ -42,7 +43,10 @@ static void dispatchCommand(const Command &cmd) {
     case CMD_SOLENOID_HOLD_SET: solenoid_set_hold(cmd.boolValue); break;
     case CMD_MOTOR_SET:            motor_set_manual(cmd.intValue); break;
     case CMD_EXTERNAL_TRIGGER_SET: motor_set_external_trigger(cmd.boolValue); break;
-    case CMD_EXTERNAL_READING_SET: external_reference_set(cmd.externalReading.co2, cmd.externalReading.pm25); break;
+    case CMD_EXTERNAL_READING_SET: external_reference_set(cmd.floatValue); break;
+    case CMD_SCHEDULE_SET:
+      schedule_set(cmd.schedule.enabled, cmd.schedule.onH, cmd.schedule.onM, cmd.schedule.offH, cmd.schedule.offM);
+      break;
   }
 }
 
@@ -58,6 +62,7 @@ static void deviceTask(void *pv) {
   mist_init();
   solenoid_init();
   motor_init();
+  schedule_init();
   tft_init();
 
   for (;;) {
@@ -71,6 +76,7 @@ static void deviceTask(void *pv) {
     mist_update();
     solenoid_update();
     motor_update();
+    schedule_update();
     tft_update();
 
     // ~200 Hz. Comfortably fast enough for the 50ms timing tolerances the

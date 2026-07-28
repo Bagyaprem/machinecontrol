@@ -57,7 +57,10 @@ static int lastMq135Raw = 0;
 static float readMq135Ppm() {
   int raw = analogRead(PIN_MQ135);
   lastMq135Raw = raw;
-  float voltage = raw * (3.3f / 4095.0f);
+  // ×2: a 1:1 (15k+15k) voltage divider sits between the MQ135's AO pin and
+  // this GPIO now, to keep the ADC input within its 3.3V rating - see
+  // config.h's pin map comment. Undo the halving here before the Rs math.
+  float voltage = raw * (3.3f / 4095.0f) * 2.0f;
   if (voltage < 0.01f) voltage = 0.01f;   // guard divide-by-zero if the sensor's unplugged/shorted
   float rs = ((3.3f * MQ135_RL_KOHMS) / voltage) - MQ135_RL_KOHMS;
   float ratio = rs / MQ135_R0_KOHMS;

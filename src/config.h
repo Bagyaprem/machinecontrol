@@ -66,7 +66,7 @@
 // TO SHIP AN UPDATE: bump FIRMWARE_VERSION below and push to main. CI does
 // the rest. The board checks on boot, every OTA_CHECK_INTERVAL_MS, and
 // instantly if you publish to TOPIC_OTA_TRIGGER - no USB needed.
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.1.0"
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/Bagyaprem/machinecontrol/main/ota/manifest.json"
 #define OTA_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)   // 6 hours
 
@@ -90,13 +90,19 @@
 // reconnecting board picks up the current external condition immediately
 // instead of waiting up to a full poll interval for the next update.
 #define TOPIC_MOTOR_EXTERNAL_TRIGGER "esp32/" DEVICE_ID "/motor/external_trigger"
-// Raw co2/pm25 values from the same backend-owned external source, for TFT
+// Raw pm25 value from the same backend-owned external source, for TFT
 // DISPLAY ONLY - never used in any control decision (that's still entirely
 // TOPIC_MOTOR_EXTERNAL_TRIGGER's resolved boolean above). Retained, so the
 // TFT shows the last known reading immediately after a reconnect/reboot
 // instead of blank/zero until the next backend poll.
 #define TOPIC_EXTERNAL_PM_READING "esp32/" DEVICE_ID "/external_pm/reading"
 #define TOPIC_MQ135_READING   "esp32/" DEVICE_ID "/mq135/reading"
+// Master on/off schedule - {"enabled":bool,"on_time":"HH:MM","off_time":"HH:MM"}.
+// When enabled, the board forces every relay + the motor off the instant
+// local time crosses off_time, and leaves things alone (whatever a user
+// last set) the instant it crosses on_time - see device_schedule.cpp.
+#define TOPIC_SCHEDULE_SET    "esp32/" DEVICE_ID "/schedule/set"
+#define TOPIC_SCHEDULE_STATE  "esp32/" DEVICE_ID "/schedule/state"
 #define TOPIC_STATUS          "esp32/" DEVICE_ID "/status"
 // Publish anything to this topic to force an immediate OTA check (instead
 // of waiting for the next OTA_CHECK_INTERVAL_MS) - not retained, it's a
@@ -112,12 +118,12 @@
 #define PIN_RPWM        25   // motor driver forward PWM
 #define PIN_LPWM        26   // motor driver reverse PWM (unused - single direction only)
 #define PIN_MOTOR_EN    27   // motor driver enable
-#define PIN_RELAY_PUMP  32   // relay 2 - air pump
+#define PIN_RELAY_PUMP  32   // relay 3 - air pump
 #define PIN_RELAY_VALVE 33   // relay 4 - solenoid / drain valve
-#define PIN_RELAY_LED   18   // relay 1 - LED strip
-#define PIN_RELAY_MIST  19   // relay 3 - mist diffuser
+#define PIN_RELAY_LED   14   // relay 1 - LED strip (moved from GPIO18 to left row, away from TFT pins)
+#define PIN_RELAY_MIST  13   // relay 2 - mist diffuser (moved from GPIO19 to left row, away from TFT pins)
 #define PIN_WIFI_LED     2   // onboard LED - WiFi/MQTT status
-#define PIN_MQ135       34   // MQ135 analog output (input-only ADC1 pin)
+#define PIN_MQ135       34   // MQ135 AO through an external 15k+15k divider (input-only ADC1 pin) - see device_motor.cpp's readMq135Ppm() ×2 compensation
 
 #define TFT_CS   5
 #define TFT_RST  4
@@ -138,6 +144,14 @@
 #define PWM_RES     8    // 8-bit: duty 0-255
 #define CH_RPWM     0
 #define CH_LPWM     1
+
+// ---- NTP (wall-clock time for the on/off schedule) ----
+// This board has no RTC battery, so wall-clock time only exists after a
+// successful NTP sync over WiFi (see network_task.cpp's configTime() call).
+// device_schedule.cpp refuses to enforce the schedule until synced, rather
+// than guessing a time from millis()-since-boot.
+#define NTP_SERVER      "pool.ntp.org"
+#define TZ_OFFSET_SEC   (5 * 3600 + 30 * 60)   // IST (UTC+5:30) - change if this board is deployed outside India
 
 // ---- MQ135 clean-air calibration ----
 // Recalibrate per physical unit: run in fresh outdoor air and tune
