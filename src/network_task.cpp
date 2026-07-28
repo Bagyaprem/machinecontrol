@@ -203,7 +203,15 @@ static void mqttEventHandlerAdapter(void *handler_args, esp_event_base_t base, i
 }
 
 static void mqttInit() {
-  snprintf(s_mqttUri, sizeof(s_mqttUri), MQTT_USE_TLS ? "mqtts://%s:%d" : "mqtt://%s:%d", MQTT_HOST, MQTT_PORT);
+  // #if, not a runtime ternary picking between the two literals: a ternary
+  // result isn't a compile-time-constant format string as far as -Wformat
+  // is concerned, and CI's stricter default toolchain flags (Werror on
+  // format warnings) rejected it outright even though it built fine locally.
+#if MQTT_USE_TLS
+  snprintf(s_mqttUri, sizeof(s_mqttUri), "mqtts://%s:%d", MQTT_HOST, MQTT_PORT);
+#else
+  snprintf(s_mqttUri, sizeof(s_mqttUri), "mqtt://%s:%d", MQTT_HOST, MQTT_PORT);
+#endif
 
   esp_mqtt_client_config_t cfg = {};
 #if ESP_IDF_VERSION_MAJOR >= 5
