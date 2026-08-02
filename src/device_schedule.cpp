@@ -47,6 +47,13 @@ static void forceAllOff() {
   mist_set_auto(false);
   solenoid_set_hold(false);
   motor_set_manual(0);
+  // Zeroing manual_speed alone is not enough: if auto mode is on and a
+  // trigger (mq135/external PM) is still latched true, motor_update()'s
+  // resolver would recompute requested=100/50 from that trigger on the very
+  // next tick and re-energize the motor inside the window this function
+  // exists to close. Disabling auto (mirroring mist_set_auto above) removes
+  // that path entirely, same as a manual command would.
+  motor_set_auto(false);
 }
 
 void schedule_init() {

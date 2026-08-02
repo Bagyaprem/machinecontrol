@@ -17,6 +17,11 @@ CONFIG_AUTOSTART_ARDUINO=y
 # pinning it explicitly avoids the bootloader ever using the wrong flash-size
 # map, which matters now that partitions_ota.csv uses flash space up near
 # the 2MB mark.
+# CONFIG_ESPTOOLPY_FLASHSIZE is a Kconfig `choice` group - setting only the
+# string mirror below (without this boolean) silently does NOT select the
+# choice; it was verified doing exactly that (build still reported 2MB
+# despite the string line existing) until this line was added.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 
 # GitHub-pull OTA (src/ota_update.cpp) fetches over HTTPS from
@@ -25,3 +30,12 @@ CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 # how it verifies that without us hand-embedding GitHub's own certificate
 # (which rotates independently of anything we control).
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# App rollback: a newly OTA-flashed image boots into a "pending verify"
+# state. If this boot never confirms itself healthy (see network_task.cpp's
+# esp_ota_mark_app_valid_cancel_rollback() call) before the next reset, the
+# bootloader automatically reverts to the previous known-good OTA partition
+# instead of retrying the broken image forever. A plain USB flash is
+# unaffected by this (esptool doesn't go through the OTA state machine at
+# all), so this only ever protects against a bad OTA push.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

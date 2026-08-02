@@ -9,6 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "mqtt_client.h"
+#include "esp_ota_ops.h"
 
 // Real QoS 1 (broker acks + automatic resend) requires ESP-IDF's
 // esp_mqtt_client - the common Arduino MQTT library (PubSubClient) only
@@ -166,10 +167,25 @@ static void handleIncomingTopic(const char *topic, const char *payload, int len)
   handleIncomingCommand(topic, payload, len);
 }
 
+// Set once, on this boot's first successful MQTT connect - see
+// sdkconfig.defaults' CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE comment. A
+// successful MQTT connect is a strong enough proxy that this boot is healthy
+// (it proves WiFi, TLS, and the MQTT client all work, and that Core 1 didn't
+// panic/reset before Core 0 ever got this far) to cancel any pending OTA
+// rollback. Safe to call even when this boot was never pending verification
+// (a normal USB flash, not an OTA update) - esp_ota_mark_app_valid_cancel_
+// rollback() is a documented no-op in that case.
+static bool s_otaMarkedValid = false;
+
 static esp_err_t mqttEventHandler(esp_mqtt_event_handle_t event) {
   switch (event->event_id) {
     case MQTT_EVENT_CONNECTED:
       g_mqttConnected = true;
+      if (!s_otaMarkedValid) {
+        s_otaMarkedValid = true;
+        esp_ota_mark_app_valid_cancel_rollback();
+        Serial.println("[ota] app marked valid - rollback cancelled");
+      }
       esp_mqtt_client_subscribe(s_client, TOPIC_LED_SET, 1);
       esp_mqtt_client_subscribe(s_client, TOPIC_PUMP_SET, 1);
       esp_mqtt_client_subscribe(s_client, TOPIC_MIST_SET, 1);
@@ -286,8 +302,16 @@ static void mqttInit() {
 #define BACKOFF_MIN_MS 8000UL
 #define BACKOFF_MAX_MS 60000UL
 
+// Elapsed-since-last-attempt, not a next-attempt deadline: the deadline form
+// (attemptAt = now + backoff, tested with now < attemptAt) breaks across the
+// ~49.7-day millis() rollover, where the addition wraps to a small number and
+// the comparison then blocks every retry for the rest of the wrap. Unsigned
+// subtraction wraps correctly, so the elapsed form stays right through it.
+// This matters here specifically because a board that has been up 49 days is
+// exactly the one you need to reconnect reliably without a human present.
 static unsigned long s_wifiBackoffMs = BACKOFF_MIN_MS;
-static unsigned long s_wifiNextAttemptAt = 0;
+static unsigned long s_wifiLastAttemptAt = 0;
+static bool s_wifiEverAttempted = false;
 static bool s_wifiWasConnected = false;
 
 static void wifiSupervisor(unsigned long now) {
@@ -300,14 +324,15 @@ static void wifiSupervisor(unsigned long now) {
     return;
   }
   s_wifiWasConnected = false;
-  if (now < s_wifiNextAttemptAt) return;
-  s_wifiNextAttemptAt = now + s_wifiBackoffMs;
+  if (s_wifiEverAttempted && (now - s_wifiLastAttemptAt) < s_wifiBackoffMs) return;
+  s_wifiEverAttempted = true;
+  s_wifiLastAttemptAt = now;
   s_wifiBackoffMs = min(s_wifiBackoffMs * 2, BACKOFF_MAX_MS);
   WiFi.reconnect();
 }
 
 static unsigned long s_mqttBackoffMs = BACKOFF_MIN_MS;
-static unsigned long s_mqttNextAttemptAt = 0;
+static unsigned long s_mqttLastAttemptAt = 0;   // elapsed-based, same rollover reasoning as the WiFi pair above
 
 static bool s_mqttInitAttempted = false;
 
@@ -330,7 +355,9 @@ static void mqttSupervisor(unsigned long now) {
     // esp_mqtt_client_reconnect() - aborting the handshake esp_mqtt_client_start()
     // just kicked off before it ever had a chance to complete. This grace
     // period is what actually gives the first attempt time to finish.
-    s_mqttNextAttemptAt = now + BACKOFF_MIN_MS;
+    // (s_mqttBackoffMs is still BACKOFF_MIN_MS here, so the elapsed check
+    // below yields exactly that same 8s grace.)
+    s_mqttLastAttemptAt = now;
     return;   // esp_mqtt_client_start() inside mqttInit() already attempts a connection this tick
   }
 
@@ -339,8 +366,8 @@ static void mqttSupervisor(unsigned long now) {
     s_mqttBackoffMs = BACKOFF_MIN_MS;
     return;
   }
-  if (now < s_mqttNextAttemptAt) return;
-  s_mqttNextAttemptAt = now + s_mqttBackoffMs;
+  if ((now - s_mqttLastAttemptAt) < s_mqttBackoffMs) return;
+  s_mqttLastAttemptAt = now;
   s_mqttBackoffMs = min(s_mqttBackoffMs * 2, BACKOFF_MAX_MS);
   esp_mqtt_client_reconnect(s_client);
 }

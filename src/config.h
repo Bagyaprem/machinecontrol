@@ -76,7 +76,7 @@
 // hardware pull-up resistors. Flip to 1 (and restore the real
 // implementation's #if guard below) once OTA is actually wired up and worth
 // paying this size cost for again.
-#define OTA_ENABLED 0
+#define OTA_ENABLED 1
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/Bagyaprem/machinecontrol/main/ota/manifest.json"
 #define OTA_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)   // 6 hours
 
@@ -174,3 +174,11 @@
 // MQ135_R0_KOHMS until the ppm estimate settles near ~400 there.
 #define MQ135_RL_KOHMS 10.0
 #define MQ135_R0_KOHMS 76.63
+// The MQ135 module's own supply voltage (5V - standard for these breakouts,
+// and the reason the 15k+15k divider above exists at all: its AO swing would
+// otherwise exceed the ESP32 ADC's 3.3V rating). NOT the same number as the
+// ESP32's 3.3V ADC reference used to convert raw counts to volts in
+// readMq135Ppm() - those are two different voltages that happen to both show
+// up in that function; keep them as separate constants so they don't get
+// collapsed into one "3.3" again.
+#define MQ135_CIRCUIT_VOLTAGE_V 5.0

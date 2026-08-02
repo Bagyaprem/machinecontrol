@@ -41,7 +41,15 @@ static unsigned long pulseStartMs = 0;
 static unsigned long pulseDurationMs = 0;
 
 static bool autoEnabled = false;
-static unsigned long nextAutoCycleAt = 0;
+// Stored as "when the last cycle started", NOT "when the next one is due".
+// The deadline form (nextAutoCycleAt = now + INTERVAL, tested with
+// now >= nextAutoCycleAt) breaks across the ~49.7-day millis() rollover: the
+// addition wraps to a small number while `now` is still huge, so the
+// comparison is instantly true and the auto-cycle fires continuously. The
+// elapsed form below (now - lastAutoCycleAt >= INTERVAL) is rollover-safe,
+// because unsigned subtraction wraps correctly. This matches how every other
+// timer in this firmware is already written.
+static unsigned long lastAutoCycleAt = 0;
 
 static bool dirty = true;
 
@@ -61,7 +69,7 @@ static bool startPulse(MistSource src, unsigned long durationMs) {
 void mist_init() {
   hw_write_mist(false);   // never restore a pulse-in-flight - only the schedule flag below
   autoEnabled = persist_get_bool("mist_auto", false);   // power-cut restore
-  if (autoEnabled) nextAutoCycleAt = millis() + MIST_AUTO_CYCLE_MS;   // fresh countdown from boot
+  if (autoEnabled) lastAutoCycleAt = millis();   // fresh countdown from boot
   dirty = true;
 }
 
@@ -74,7 +82,7 @@ void mist_set_auto(bool enabled) {
   if (enabled == autoEnabled) return;
   autoEnabled = enabled;
   if (autoEnabled) {
-    nextAutoCycleAt = millis() + MIST_AUTO_CYCLE_MS;   // fresh 30-min countdown from the moment it's enabled
+    lastAutoCycleAt = millis();   // fresh 30-min countdown from the moment it's enabled
   }
   persist_set_bool("mist_auto", autoEnabled);
   dirty = true;
@@ -94,16 +102,16 @@ void mist_update() {
   }
 
   // Auto-cycle: fires every 30 minutes while enabled, reusing the same pulse
-  // mechanism as manual (1s pulse). If a manual pulse happens to be running
+  // mechanism as manual (3s pulse). If a manual pulse happens to be running
   // right when a cycle is due, startPulse() no-ops and returns false here -
-  // nextAutoCycleAt is deliberately left in the past in that case (instead
-  // of being bumped to now+MIST_AUTO_CYCLE_MS), so this check retries every loop tick
-  // (cheap - just a comparison) until the manual pulse clears, then fires
-  // immediately. That's what keeps the auto-cycle from silently skipping a
-  // cycle on a rare collision with a manual trigger.
-  if (autoEnabled && now >= nextAutoCycleAt) {
+  // lastAutoCycleAt is deliberately NOT advanced in that case, so this check
+  // stays true and retries every loop tick (cheap - just a comparison) until
+  // the manual pulse clears, then fires immediately. That's what keeps the
+  // auto-cycle from silently skipping a cycle on a rare collision with a
+  // manual trigger.
+  if (autoEnabled && (now - lastAutoCycleAt >= MIST_AUTO_CYCLE_MS)) {
     if (startPulse(MIST_SRC_AUTO, MIST_AUTO_PULSE_MS)) {
-      nextAutoCycleAt = now + MIST_AUTO_CYCLE_MS;
+      lastAutoCycleAt = now;
     }
   }
 

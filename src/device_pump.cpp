@@ -8,6 +8,9 @@ static bool pumpOn = false;
 static bool dirty = true;
 
 static bool pendingRestore = false;
+// Cancelled by any manual command that arrives before the boot-restore gate
+// fires - see the matching comment in device_led.cpp.
+static bool restorePending = true;
 
 void pump_init() {
   // Relay stays OFF (already set by hardware_io_init()) until
@@ -17,12 +20,14 @@ void pump_init() {
 }
 
 void pump_apply_restored_state() {
+  if (!restorePending) return;   // a manual command already arrived - don't clobber it
   pumpOn = pendingRestore;
   hw_write_pump(pumpOn);
   dirty = true;
 }
 
 void pump_set(bool on) {
+  restorePending = false;
   if (on == pumpOn) return;
   pumpOn = on;
   hw_write_pump(pumpOn);   // sole writer of this relay's pin

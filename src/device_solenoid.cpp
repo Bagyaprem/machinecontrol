@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-#define SOLENOID_PULSE_MS 300UL
+#define SOLENOID_PULSE_MS 150UL   // shortened from 300ms per explicit user request
 
 // DESIGN DECISION: pulse mode and hold mode are mutually exclusive, and any
 // conflict between them is REJECTED, never silently auto-resolved:

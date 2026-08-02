@@ -47,20 +47,46 @@ static unsigned long lastMq135PollAt = 0;
 static float lastMq135Ppm = 0;
 static int lastMq135Raw = 0;
 
+// Returns NAN when the reading is unusable - callers MUST check isfinite()
+// before using it for anything. See the rs guard below.
 static float readMq135Ppm() {
   int raw = analogRead(PIN_MQ135);
   lastMq135Raw = raw;
   // ×2: a 1:1 (15k+15k) voltage divider sits between the MQ135's AO pin and
   // this GPIO now, to keep the ADC input within its 3.3V rating - see
   // config.h's pin map comment. Undo the halving here before the Rs math.
-  float voltage = raw * (3.3f / 4095.0f) * 2.0f;
+  float voltage = raw * (3.3f / 4095.0f) * 2.0f;   // 3.3f here is the ESP32 ADC reference - unrelated to the sensor's own supply voltage below
   if (voltage < 0.01f) voltage = 0.01f;   // guard divide-by-zero if the sensor's unplugged/shorted
-  float rs = ((3.3f * MQ135_RL_KOHMS) / voltage) - MQ135_RL_KOHMS;
+  // Was hardcoded 3.3f here (leftover from before the divider existed, when
+  // the sensor's AO went straight into the 3.3V ADC and the two voltages
+  // were coincidentally the same number) - see config.h's
+  // MQ135_CIRCUIT_VOLTAGE_V comment for why that's wrong now that the module
+  // runs on 5V with a divider bringing its signal back down to ADC-safe
+  // range. Left uncorrected, this skews every reading except right at the
+  // single point MQ135_R0_KOHMS was field-calibrated against.
+  float rs = ((MQ135_CIRCUIT_VOLTAGE_V * MQ135_RL_KOHMS) / voltage) - MQ135_RL_KOHMS;
+
+  // rs goes NEGATIVE as soon as the compensated voltage exceeds 3.3V, i.e.
+  // raw > ~2047. powf(negative, -2.769) is NaN - and NaN then fails BOTH
+  // hysteresis comparisons in pollMq135() (NaN >= ON and NaN <= OFF are each
+  // false), which used to freeze mq135Request forever with nothing logged
+  // anywhere. Observed live on this board: a railed sensor (raw=4095) published
+  // {"raw":4095,"ppm":null} and silently disabled the CO2 auto-trigger
+  // completely. Fail loudly-but-safely instead: NAN out, caller forces the
+  // request off and marks the reading invalid.
+  if (rs <= 0.0f) return NAN;
+
   float ratio = rs / MQ135_R0_KOHMS;
-  return 116.6020682f * powf(ratio, -2.769034857f);   // standard MQ135 CO2-equivalent curve fit
+  float ppm = 116.6020682f * powf(ratio, -2.769034857f);   // standard MQ135 CO2-equivalent curve fit
+  return isfinite(ppm) ? ppm : NAN;
 }
 
 static int pendingSpeedRestore = 0;
+// Cancelled by a manual speed command that arrives before the boot-restore
+// gate fires - see the matching comment in device_led.cpp. auto_enabled
+// isn't covered by this flag: it's restored immediately in motor_init()
+// (see comment below), not gated behind bootRestoreGate() at all.
+static bool restorePending = true;
 
 void motor_init() {
   hw_write_motor_pwm(0);
@@ -77,12 +103,14 @@ void motor_init() {
 }
 
 void motor_apply_restored_state() {
+  if (!restorePending) return;   // a manual command already arrived - don't clobber it
   manualSpeed = pendingSpeedRestore;
   dirty = true;
 }
 
 void motor_set_manual(int speed) {
   if (speed != 0 && speed != 50 && speed != 75 && speed != 100) return;
+  restorePending = false;
   manualSpeed = speed;
   persist_set_int("motor_spd", manualSpeed);
   dirty = true;
@@ -114,14 +142,26 @@ static void pollMq135(unsigned long now) {
   lastMq135PollAt = now;
   lastMq135Ppm = readMq135Ppm();
 
-  if (!mq135Request && lastMq135Ppm >= MQ135_ON_PPM) mq135Request = true;
-  else if (mq135Request && lastMq135Ppm <= MQ135_OFF_PPM) mq135Request = false;
+  const bool valid = isfinite(lastMq135Ppm);
+  if (valid) {
+    if (!mq135Request && lastMq135Ppm >= MQ135_ON_PPM) mq135Request = true;
+    else if (mq135Request && lastMq135Ppm <= MQ135_OFF_PPM) mq135Request = false;
+  } else if (mq135Request) {
+    // Unusable reading: force the request OFF rather than leaving it stuck at
+    // whatever it last was. A broken/unplugged CO2 sensor must never be able
+    // to hold the motor on indefinitely with no way to clear it.
+    mq135Request = false;
+  }
 
   StateUpdate reading;
   reading.topic = STATE_MQ135_READING;
   JsonDocument doc;
   doc["raw"] = lastMq135Raw;
-  doc["ppm"] = lastMq135Ppm;
+  // Explicit flag so a bad sensor is visibly a FAULT downstream, not just a
+  // mysterious null that looks like a serialization quirk.
+  doc["valid"] = valid;
+  if (valid) doc["ppm"] = lastMq135Ppm;
+  else       doc["ppm"] = nullptr;
   serializeJson(doc, reading.json, sizeof(reading.json));
   xQueueSend(stateQueueHandle, &reading, 0);
 
