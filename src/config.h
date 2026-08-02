@@ -61,21 +61,24 @@
 // .github/workflows/firmware-ota.yml - it builds on every push to main that
 // touches src/**, platformio.ini, or the partition/sdkconfig files, then
 // commits the built .bin and a manifest carrying FIRMWARE_VERSION back into
-// the ota/ folder on main. Nothing to run by hand.
+// the ota/ folder on main. Nothing to run by hand, but that workflow does
+// need six repo secrets set (Settings > Secrets and variables > Actions):
+// WIFI_SSID, WIFI_PASS, MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD -
+// matching secrets.h. Missing/misnamed secrets don't fail loudly; they just
+// come through as empty, which shows up as a compile error deep in
+// mqttInit() instead of anything obviously secret-shaped.
 //
 // TO SHIP AN UPDATE: bump FIRMWARE_VERSION below and push to main. CI does
 // the rest. The board checks on boot, every OTA_CHECK_INTERVAL_MS, and
 // instantly if you publish to TOPIC_OTA_TRIGGER - no USB needed.
 #define FIRMWARE_VERSION "1.1.0"
-// Fully stripped out of the build (not just runtime-disabled) as of
-// 2026-07-29 - see ota_update.cpp. Cuts the HTTPS/TLS client code (esp_http_
-// client, esp_https_ota, the mbedTLS cert bundle) out of the linked image
-// entirely, shrinking flash usage and therefore the bootloader's flash-load
-// time - an attempt at shortening the pre-firmware GPIO-floating window
-// that's been causing the relay boot flicker, tried before resorting to
-// hardware pull-up resistors. Flip to 1 (and restore the real
-// implementation's #if guard below) once OTA is actually wired up and worth
-// paying this size cost for again.
+// Real esp_https_ota implementation is back in the build as of 2026-08-02 -
+// automatic boot/interval checks stay off for now (see ota_update.cpp's
+// ota_init()) pending the documented MQTT-TLS collision, but manual-trigger
+// OTA (publish to TOPIC_OTA_TRIGGER) is live. Flip back to 0 only if flash
+// size becomes tight again (this pulls in esp_http_client/esp_https_ota/the
+// mbedTLS cert bundle) - see hardware_io.cpp for the relay boot-flicker fix
+// that made the earlier size-shaving attempt here unnecessary.
 #define OTA_ENABLED 1
 #define OTA_MANIFEST_URL "https://raw.githubusercontent.com/Bagyaprem/machinecontrol/main/ota/manifest.json"
 #define OTA_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)   // 6 hours
